@@ -1,4 +1,4 @@
-#include <Arduino.h>
+//#include <Arduino.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -66,8 +66,8 @@ int sensorValue;
 int setpump=10000,timeLoop=30000,Millis=0; // thời gian bật máy bơm, thời gian lặp,millis bắt đầu bằng 0
 float analogPH,analogPH_filter,pHValue,voltagePH;
 // Hiệu chỉnh cảm biến pH bằng cách thay đổi biến acidVoltage và neutraVoltage
-float acidVoltage = 1780;    // buffer solution 4.0 at 25C
-float neutralVoltage = 1250; // buffer solution 7.0 at 25C
+float acidVoltage = 1950;    // buffer solution 4.0 at 25C
+float neutralVoltage = 1425; // buffer solution 7.0 at 25C
 unsigned long int TimeSetData=0;
 int status=0;
 void display_oled();
@@ -80,6 +80,7 @@ void setData();//day du lieu len app
 void setDataDefault(); // day du lieu default len app
 void run_pump();
 void button();
+void setled();
 
 void setup()
 {
@@ -87,8 +88,11 @@ void setup()
   display.begin(i2c_Address, true);
   display.display();
   delay(2000);
+  display.clearDisplay();
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to Wi-Fi");
+  display.println("connecting to wifi");
+  display.display();
   while (WiFi.status() != WL_CONNECTED)
   {
     Serial.print(".");
@@ -97,6 +101,8 @@ void setup()
   Serial.println();
   Serial.print("Connected with IP: ");
   Serial.println(WiFi.localIP());
+  display.println(WiFi.localIP());
+  display.display();
   Serial.println();
 
   Serial.printf("Firebase Client v%s\n\n", FIREBASE_CLIENT_VERSION);
@@ -107,9 +113,11 @@ void setup()
   if(Firebase.signUp(&config,&auth,"",""))
   {
     Serial.println("ok");
+    display.println("fire base: ok");
   }
   else{
     Serial.println("fail");
+    display.println("fire base: fail");
   }
   config.database_url = DATABASE_URL;
   config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
@@ -118,10 +126,6 @@ void setup()
   Firebase.begin(&config, &auth);
   Firebase.setDoubleDigits(5);
 
-  display.begin(i2c_Address, true);
-  display.display();
-  delay(200);
-  display.clearDisplay();
   display.setTextSize(1); // Draw 2X-scale text
   display.setCursor(0,10);
   display.setTextColor(SH110X_WHITE);
@@ -154,10 +158,12 @@ void loop()
   SensorTurbidity();
   Sensor_TDS();
   Sensor_PH();
+  display_oled();// hiển thị chỉ số lên oled
   button();
+  setData();
+  setled();
   if(millis()-Millis>=timeLoop){ // vòng lặp sau timeLoop s
     run_pump();
-
   }
   display_oled();// hiển thị chỉ số lên oled
   delay(200);
@@ -167,16 +173,13 @@ void loop()
 void SensorTurbidity()
 {
   analog_ntu = analogRead(sensor_turbidity);// read the input on analog pin 0:
+    //Serial.println(analog_ntu);
   int analog_ntu_map=map(analog_ntu,0,4095,0,1023);
-  // Serial.print("adc ntu: ");
-  // Serial.println(analog_ntu);
-  // Serial.print("adc ntu_map : ");
-  // Serial.println(analog_ntu_map);
-  int analog_adjust = map(analog_ntu_map,441,547,655,860);
-  //Serial.println(analog_adjust);
+  Serial.println(analog_ntu_map);
+  int analog_adjust = map(analog_ntu_map,365,455,655,860);
   analog_ntu_filter=locnhieuntu.updateEstimate(analog_adjust);
   //Serial.println(analog_ntu_filter);
-  float vol = analog_ntu_filter * (5.0 / 1024.0); // Convert the analog reading (which goes from 0 - 4095) to a voltage (0 - 3v3V):
+  float vol = analog_ntu_filter * (5 / 1024.0); // Convert the analog reading (which goes from 0 - 4095) to a voltage (0 - 3v3V):
   ntuValue= -1120.4*vol*vol + 5742.3*vol - 4352.9;
   if(ntuValue<0){
     ntuValue=0;
@@ -229,7 +232,9 @@ void Sensor_TDS()
     float compensationCoefficient = 1.0 + 0.02 * (temperature - 25.0);                                                                                                               // temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
     float compensationVolatge = averageVoltage / compensationCoefficient;                                                                                                            // temperature compensation
     tdsValue = (133.42 * compensationVolatge * compensationVolatge * compensationVolatge - 255.86 * compensationVolatge * compensationVolatge + 857.39 * compensationVolatge) * 0.5; // convert voltage value to tds value
-
+    if(tdsValue<=5.0)
+    {tdsValue=5.0;
+    }
   }
 }
 //function caculate pH
@@ -344,13 +349,12 @@ void run_pump(){
     status=2;
     Serial.println("bom1 off");
     digitalWrite(pump1,LOW);
-    setData();  // day du lieu len
   }
 
   if (millis() - Millis-timeLoop >= setpump + 10000 && status==2)  // sau 10s thì gửi lên giá trị default
   {
-    setDataDefault();
-    Serial.println("set data default");
+    // setDataDefault();
+    // Serial.println("set data default");
     status=3;
   }
 
@@ -388,23 +392,23 @@ void setData()
     Serial.println("firebase no ready");
   }
 }
-void setDataDefault()
-{
-  if (Firebase.ready())
-  {
-    Serial.println("ready");
-    Serial.printf("Set TDS... %s\n", Firebase.setFloat(fbdo, F("/iot/tds"), 0) ? "ok" : fbdo.errorReason().c_str());
-    //Serial.printf("Get bool... %s\n", Firebase.getBool(fbdo, FPSTR("/test/bool")) ? fbdo.to<bool>() ? "true" : "false" : fbdo.errorReason().c_str());
-    Serial.printf("Set NTU... %s\n", Firebase.setFloat(fbdo, F("/iot/ntu"), 0) ? "ok" : fbdo.errorReason().c_str());
-    //Serial.printf("Get int... %s\n", Firebase.getInt(fbdo, F("/test/int")) ? String(fbdo.to<int>()).c_str() : fbdo.errorReason().c_str());
-    Serial.printf("Set pH... %s\n", Firebase.setFloat(fbdo, F("/iot/ph"), 0) ? "ok" : fbdo.errorReason().c_str());
-    Serial.printf("Set temp... %s\n", Firebase.setFloat(fbdo, F("/iot/temp"), 25) ? "ok" : fbdo.errorReason().c_str());
-    Serial.println();
-  }
-  else{
-    Serial.println("firebase no ready");
-  }
-}
+// void setDataDefault()
+// {
+//   if (Firebase.ready())
+//   {
+//     Serial.println("ready");
+//     Serial.printf("Set TDS... %s\n", Firebase.setFloat(fbdo, F("/iot/tds"), 0) ? "ok" : fbdo.errorReason().c_str());
+//     //Serial.printf("Get bool... %s\n", Firebase.getBool(fbdo, FPSTR("/test/bool")) ? fbdo.to<bool>() ? "true" : "false" : fbdo.errorReason().c_str());
+//     Serial.printf("Set NTU... %s\n", Firebase.setFloat(fbdo, F("/iot/ntu"), 0) ? "ok" : fbdo.errorReason().c_str());
+//     //Serial.printf("Get int... %s\n", Firebase.getInt(fbdo, F("/test/int")) ? String(fbdo.to<int>()).c_str() : fbdo.errorReason().c_str());
+//     Serial.printf("Set pH... %s\n", Firebase.setFloat(fbdo, F("/iot/ph"), 7) ? "ok" : fbdo.errorReason().c_str());
+//     Serial.printf("Set temp... %s\n", Firebase.setFloat(fbdo, F("/iot/temp"), 25) ? "ok" : fbdo.errorReason().c_str());
+//     Serial.println();
+//   }
+//   else{
+//     Serial.println("firebase no ready");
+//   }
+// }
 void button()
 {
   if (digitalRead(button1) == LOW)
@@ -430,5 +434,47 @@ void button()
   }
   if(digitalRead(button5)==LOW){
     //
+  }
+}
+void setled(){
+    if(ntuValue >= 1700 && ntuValue <= 2000){
+    Firebase.setDouble(fbdo, "/iot/ntu1", 3); //// độ đục
+  }
+  else if(ntuValue >= 600 && ntuValue <= 1600){
+   Firebase.setDouble(fbdo, "/iot/ntu1", 2); //// độ đục
+  }
+  else if(ntuValue < 600 ){
+    Firebase.setDouble(fbdo, "/iot/ntu1", 1); //// độ đục
+    
+  }
+/////////led cho ph
+  if(pHValue >= 7 && pHValue <= 9){
+    Firebase.setDouble(fbdo, "/iot/ph1", 1); //// độ ph
+  }
+  else if(pHValue > 9 && pHValue <= 12){
+Firebase.setDouble(fbdo, "/iot/ph1", 2); //// độ ph
+  }
+  else if(pHValue >12 || pHValue <7 ){
+Firebase.setDouble(fbdo, "/iot/ph1", 3); //// độ ph
+  }
+/////////led cho tds
+  if(tdsValue >= 300 && tdsValue <= 450){
+    Firebase.setDouble(fbdo, "/iot/tds1", 3); //// độ tds
+  }
+  else if(tdsValue >= 100 && tdsValue <= 250){
+    Firebase.setDouble(fbdo, "/iot/tds1", 2); //// độ tds
+  }
+  else if(tdsValue >0 && tdsValue <100 ){
+    Firebase.setDouble(fbdo, "/iot/tds1", 1); //// độ tds
+  }
+/////////led cho temp
+  if(temperature >= 27.5 && temperature <= 29.5){
+    Firebase.setDouble(fbdo, "/iot/temp1", 1); //// độ temp
+  }
+  else if(temperature >= 29.5 && temperature <= 35){
+    Firebase.setDouble(fbdo, "/iot/temp1", 2); //// độ temp
+  }
+  else if(temperature >35 || temperature <27 ){
+    Firebase.setDouble(fbdo, "/iot/temp1", 3); //// độ temp
   }
 }
